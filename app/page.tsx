@@ -1,10 +1,10 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import { nanoid } from 'nanoid';
 import { 
   Zap, LogOut, Settings, Shield, AlertTriangle, Lock, Copy, Rocket, 
-  Clock, Code, X, FileJson, FileCode, Server, Activity, CreditCard 
+  Clock, Code, X, FileJson, FileCode, Server, Activity, CreditCard, Trash2 
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -12,13 +12,14 @@ export default function Dashboard() {
   const [user, setUser] = useState<any>(null);
   const [isPro, setIsPro] = useState(false);
   const [endpoints, setEndpoints] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null); // NEW: Track selection
   const [activeTab, setActiveTab] = useState('editor');
   
   // Form States
   const [jsonInput, setJsonInput] = useState('{\n  "id": "{{uuid}}",\n  "name": "{{firstName}}",\n  "email": "{{email}}",\n  "role": "admin"\n}');
   const [method, setMethod] = useState('GET');
-  const [statusCode, setStatusCode] = useState(200); // NEW: Status Code
-  const [contentType, setContentType] = useState('application/json'); // NEW: Content Type
+  const [statusCode, setStatusCode] = useState(200);
+  const [contentType, setContentType] = useState('application/json');
   const [token, setToken] = useState('');
   const [chaos, setChaos] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -27,10 +28,8 @@ export default function Dashboard() {
   // PRO Feature States
   const [responseDelay, setResponseDelay] = useState(0); 
   const [customHeaders, setCustomHeaders] = useState('');
-  
   const [showUpgradeModal, setShowUpgradeModal] = useState(false); 
 
-  // 1. Load User & Data
   useEffect(() => {
     const init = async () => {
       const { data } = await supabase.auth.getUser();
@@ -49,14 +48,11 @@ export default function Dashboard() {
     if (data) setEndpoints(data);
   };
 
-  // 2. Create Mock
   const handleCreate = async () => {
     if (!user) return alert('Please Login first!');
     setLoading(true);
     const id = nanoid(6); 
     
-    // We bundle all the advanced settings into the JSON payload for simplicity
-    // In a real app, you'd add columns for status_code, content_type etc.
     const { error } = await supabase.from('endpoints').insert({
       id,
       user_id: user.id,
@@ -68,17 +64,49 @@ export default function Dashboard() {
       response_delay_ms: isPro && responseDelay > 0 ? responseDelay : null,
       custom_headers_json: isPro ? JSON.stringify({
          ...JSON.parse(customHeaders || '{}'),
-         "X-MockFast-Status": statusCode, // We store status here for the demo logic
+         "X-MockFast-Status": statusCode, 
          "Content-Type": contentType
       }) : null
     });
 
     if (error) alert('Error creating mock');
-    else loadMocks(user.id);
+    else {
+        loadMocks(user.id);
+        setSelectedId(id); // Auto-select the new one
+    }
     setLoading(false);
   };
 
-  // 3. Billing Handlers
+  // Updated Delete Logic (Handles Mouse and Keyboard events)
+  const handleDelete = useCallback(async (id: string, e?: any) => {
+    if (e) e.stopPropagation(); 
+    if(!confirm("Are you sure you want to delete this endpoint?")) return;
+
+    const { error } = await supabase.from('endpoints').delete().eq('id', id);
+    if (error) alert("Failed to delete");
+    else {
+        setEndpoints(prev => prev.filter(ep => ep.id !== id));
+        if (selectedId === id) setSelectedId(null);
+    }
+  }, [selectedId]);
+
+  // NEW: Keyboard Listener for Backspace/Delete
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        // 1. Ignore if user is typing in an input, textarea, etc.
+        const tagName = (e.target as HTMLElement).tagName;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName)) return;
+
+        // 2. Check for Delete/Backspace keys and if an item is selected
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+            handleDelete(selectedId);
+        }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedId, handleDelete]);
+
   const handleUpgradeClick = () => {
     if (!user) return alert("Please login first!");
     setShowUpgradeModal(true);
@@ -108,7 +136,6 @@ export default function Dashboard() {
     else alert("Payment initiation failed. Check keys!");
   };
 
-  // Helper to insert dynamic tags
   const insertTag = (tag: string) => {
     setJsonInput(prev => prev.replace('}', `  "newField": "{{${tag}}}"\n}`));
   };
@@ -132,12 +159,10 @@ export default function Dashboard() {
       )}
 
       <div className="max-w-7xl mx-auto">
-        
-        {/* Header */}
         <header className="flex flex-col md:flex-row justify-between items-center mb-8 border-b border-gray-800 pb-6 gap-4">
           <h1 className="text-3xl font-bold text-white flex items-center gap-2">
             <div className="bg-yellow-500 p-1 rounded"><Zap className="text-black fill-black" size={24}/></div>
-            MockFast <span className="text-sm text-gray-500 font-normal ml-2">v2.0</span>
+            MockFast <span className="text-sm text-gray-500 font-normal ml-2">v2.2</span>
           </h1>
           
           {user ? (
@@ -168,8 +193,6 @@ export default function Dashboard() {
         </header>
 
         <div className="grid lg:grid-cols-12 gap-8">
-          
-          {/* Sidebar (Mocks List) - Col Span 3 */}
           <div className="lg:col-span-3 space-y-4">
             <div className="flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase text-gray-500 tracking-wider">Endpoints</h3>
@@ -178,7 +201,13 @@ export default function Dashboard() {
             
             <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
               {endpoints.map(ep => (
-                <div key={ep.id} className="bg-neutral-900/50 p-3 rounded-lg border border-neutral-800 hover:border-yellow-500/50 transition group cursor-pointer">
+                <div 
+                    key={ep.id} 
+                    onClick={() => setSelectedId(ep.id)} // NEW: Select on click
+                    className={`bg-neutral-900/50 p-3 rounded-lg border transition group cursor-pointer relative ${
+                        selectedId === ep.id ? 'border-yellow-500 bg-neutral-800' : 'border-neutral-800 hover:border-yellow-500/50'
+                    }`}
+                >
                   <div className="flex justify-between items-center mb-2">
                     <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${
                         ep.method === 'POST' ? 'bg-purple-500/20 text-purple-300' : 
@@ -188,14 +217,16 @@ export default function Dashboard() {
                       {ep.method}
                     </span>
                     <div className="flex gap-2">
-                        <button onClick={() => navigator.clipboard.writeText(`${window.location.origin}/api/m/${ep.id}`)} className="text-gray-600 hover:text-white">
+                        <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(`${window.location.origin}/api/m/${ep.id}`) }} className="text-gray-600 hover:text-white">
                             <Copy size={12}/>
+                        </button>
+                        <button onClick={(e) => handleDelete(ep.id, e)} className="text-gray-600 hover:text-red-500">
+                            <Trash2 size={12}/>
                         </button>
                     </div>
                   </div>
                   <div className="font-mono text-xs text-gray-300 truncate mb-1">/api/m/{ep.id}</div>
                   <div className="flex gap-2 text-[10px] text-gray-500">
-                     {/* Show icons based on features enabled */}
                      {ep.response_delay_ms && <Clock size={10} className="text-yellow-500"/>}
                      {ep.chaos_config?.enabled && <AlertTriangle size={10} className="text-red-500"/>}
                      {ep.protected_token && <Lock size={10} className="text-green-500"/>}
@@ -205,10 +236,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Main Content - Col Span 9 */}
           <div className="lg:col-span-9">
-            
-            {/* Main Tabs */}
             <div className="flex gap-6 mb-6 border-b border-gray-800">
                 <button onClick={()=>setActiveTab('editor')} className={`pb-3 px-1 text-sm font-bold transition border-b-2 ${activeTab==='editor'?'text-white border-yellow-400':'text-gray-500 border-transparent hover:text-gray-300'}`}>
                     Create Endpoint
@@ -220,8 +248,6 @@ export default function Dashboard() {
 
             {activeTab === 'editor' ? (
                 <div className="grid lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4">
-                    
-                    {/* Left Column: Editor */}
                     <div className="space-y-4">
                         <div className="bg-neutral-900 border border-neutral-800 p-1 rounded-xl shadow-lg flex flex-col h-[500px]">
                             <div className="flex items-center justify-between p-3 border-b border-neutral-800 bg-neutral-900 rounded-t-xl">
@@ -253,9 +279,7 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    {/* Right Column: Advanced Config */}
                     <div className="space-y-6">
-                         {/* Deploy Button */}
                         <button 
                           onClick={handleCreate} 
                           disabled={loading}
@@ -265,8 +289,6 @@ export default function Dashboard() {
                         </button>
 
                         <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-5 space-y-6">
-                            
-                            {/* Content Type */}
                             <div>
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Response Content Type</label>
                                 <div className="grid grid-cols-3 gap-2">
@@ -281,10 +303,7 @@ export default function Dashboard() {
                                     ))}
                                 </div>
                             </div>
-
                             <div className="h-px bg-neutral-800 w-full"></div>
-
-                            {/* Pro Features Block */}
                             <div className={!isPro ? "opacity-50 pointer-events-none relative" : ""}>
                                 {!isPro && (
                                     <div className="absolute inset-0 z-10 flex items-center justify-center">
@@ -294,8 +313,6 @@ export default function Dashboard() {
                                         </div>
                                     </div>
                                 )}
-
-                                {/* Delay */}
                                 <div className="mb-6">
                                     <div className="flex justify-between mb-2">
                                         <label className="flex items-center gap-2 text-xs font-bold text-gray-400"><Clock size={12}/> Response Delay</label>
@@ -303,14 +320,10 @@ export default function Dashboard() {
                                     </div>
                                     <input type="range" min="0" max="5000" step="100" value={responseDelay} onChange={e=>setResponseDelay(parseInt(e.target.value))} className="w-full accent-yellow-500 h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer"/>
                                 </div>
-
-                                {/* Chaos */}
                                 <div className="flex items-center justify-between mb-6">
                                     <label className="flex items-center gap-2 text-xs font-bold text-gray-400"><AlertTriangle size={12}/> Chaos Mode (20% Failure)</label>
                                     <input type="checkbox" checked={chaos} onChange={e=>setChaos(e.target.checked)} className="w-4 h-4 accent-red-500 bg-black"/>
                                 </div>
-                                
-                                {/* Token */}
                                 <div>
                                     <label className="flex items-center gap-2 text-xs font-bold text-gray-400 mb-2"><Shield size={12}/> Bearer Token</label>
                                     <input placeholder="Enter secret token..." value={token} onChange={e=>setToken(e.target.value)} className="w-full bg-black border border-neutral-700 rounded px-3 py-2 text-xs text-white focus:border-green-500 outline-none"/>
@@ -320,7 +333,6 @@ export default function Dashboard() {
                     </div>
                 </div>
             ) : (
-                /* LOGS TAB */
                 <div className="bg-neutral-900 rounded-xl border border-neutral-800 p-8 text-center animate-in fade-in">
                     <div className="w-16 h-16 bg-neutral-800 rounded-full flex items-center justify-center mx-auto mb-4">
                         <Activity className="text-gray-600" size={32}/>
