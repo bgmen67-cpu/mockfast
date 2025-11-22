@@ -1,30 +1,39 @@
 import { createClient } from '@supabase/supabase-js';
-import { scheduled } from '@netlify/functions';
+import { schedule } from '@netlify/functions';
 
+// Initialize Supabase with the Service Role Key (Admin access)
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!, 
     process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export const handler = scheduled(async () => {
-    console.log('Running daily cleanup...');
+// This function runs every day at 3 AM to delete old mocks (older than 24 hours)
+const handler = async (event: any) => {
+    console.log("🧹 Running Cleanup Job...");
 
-    // 1. Find Pro Users (We must NOT delete their data)
-    const { data: proUsers } = await supabase.from('profiles').select('id').eq('is_pro', true);
-    const safeProIds = proUsers?.map(u => u.id) || ['00000000-0000-0000-0000-000000000000'];
+    // Calculate the timestamp for 24 hours ago
+    const yesterday = new Date();
+    yesterday.setHours(yesterday.getHours() - 24);
 
-    // 2. Delete Logs older than 1 hour
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    await supabase.from('request_logs').delete().lt('created_at', oneHourAgo);
+    try {
+        // Delete rows where created_at is older than 24 hours
+        const { error, count } = await supabase
+            .from('endpoints')
+            .delete({ count: 'exact' })
+            .lt('created_at', yesterday.toISOString());
 
-    // 3. Delete Free Endpoints older than 24 hours
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    await supabase
-        .from('endpoints')
-        .delete()
-        .lt('created_at', oneDayAgo)
-        .not('user_id', 'in', `(${safeProIds.map(id => `'${id}'`).join(',')})`);
-    
-    console.log('Cleanup complete.');
-    return { statusCode: 200 };
-});
+        if (error) {
+            console.error("❌ Cleanup failed:", error);
+            return { statusCode: 500 };
+        }
+
+        console.log(`✅ Cleanup complete. Deleted ${count} old endpoints.`);
+        return { statusCode: 200 };
+    } catch (err) {
+        console.error("❌ Unexpected error during cleanup:", err);
+        return { statusCode: 500 };
+    }
+};
+
+// Schedule the function to run daily via cron syntax
+export const cleanup = schedule("0 3 * * *", handler);
