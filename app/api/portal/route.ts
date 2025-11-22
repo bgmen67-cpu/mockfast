@@ -2,7 +2,10 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@/utils/supabase/server';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2023-10-16' });
+// FIX: Cast apiVersion to 'any' to prevent TypeScript errors with newer Stripe SDKs
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { 
+  apiVersion: '2023-10-16' as any 
+});
 
 export async function POST(req: Request) {
   try {
@@ -11,8 +14,7 @@ export async function POST(req: Request) {
 
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // 1. Get the Stripe Customer ID from Supabase (Assuming you saved it, 
-    // or we search Stripe by email if you didn't save it in profiles table)
+    // 1. Get the Stripe Customer ID
     const customers = await stripe.customers.list({ email: user.email });
     let customerId = customers.data[0]?.id;
 
@@ -23,7 +25,7 @@ export async function POST(req: Request) {
     // 2. Create the Portal Session
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: `${process.env.NEXT_PUBLIC_BASE_URL}/`, // Send them back to dashboard
+      return_url: `${process.env.NEXT_PUBLIC_BASE_URL}/`,
     });
 
     return NextResponse.json({ url: session.url });
