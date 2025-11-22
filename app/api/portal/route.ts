@@ -2,14 +2,16 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@/utils/supabase/server';
 
-// FIX: Cast apiVersion to 'any' to prevent TypeScript errors with newer Stripe SDKs
+// FIX: Cast apiVersion to 'any' to prevent TypeScript errors
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { 
   apiVersion: '2023-10-16' as any 
 });
 
 export async function POST(req: Request) {
   try {
-    const supabase = createClient();
+    // FIX: We must now 'await' the client creation
+    const supabase = await createClient();
+    
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
